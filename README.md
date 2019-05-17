@@ -16,8 +16,8 @@ Installation
 #### Install Python bindings for Selenium WebDriver
 `pip install selenium`
 
-#### Download ChromeDriver from the below webpage:
-`http://chromedriver.chromium.org/downloads`
+#### Download ChromeDriver from the download page:
+http://chromedriver.chromium.org/downloads
 
 Extract the archive and place ChromeDriver executable file in a directory included in 'PATH' environment variable
 
