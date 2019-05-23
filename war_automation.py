@@ -96,8 +96,8 @@ def setup_input_args(script_dir):
                                      formatter_class=argparse.RawTextHelpFormatter)
     parser.add_argument('-i', '--input', dest='input_file_path', default=default_input_file_path, 
                         help='input file path in \'ini\' format containing questionnaire key/value pairs')
-    parser.add_argument('-o', '--output', dest='out_folder_path', 
-                        help='folder path to move PDF files into')
+    parser.add_argument('-o', '--output', dest='output_dir', default=script_dir,
+                        help='directory path to move PDF files into')
     parser.add_argument('-n', '--non-gui', dest='headless', default=False, action='store_true', 
                         help='run Chrome browser in headless (Non-GUI) mode')
     parser.add_argument('-d', '--debug', action='store_true', help='print debug information and create log')
@@ -110,7 +110,7 @@ def make_directory(dir_path):
     if not os.path.isdir(dir_path):
         if 'nt' == os.name and os.path.isfile(dir_path):
             print('Error: A file with name \'log\' exists.')
-            print('Could not create log folder.')
+            print('Could not create log directory.')
             exit(3)
         try:
             os.mkdir(dir_path)
@@ -200,24 +200,36 @@ def open_url(driver, configs):
 def get_element(driver, locator, by_state, max_wait = 20):
     try:
         if 'presence' == by_state:
-            button = WebDriverWait(driver, max_wait).until(EC.presence_of_element_located(locator))
+            element = WebDriverWait(driver, max_wait).until(EC.presence_of_element_located(locator))
         elif 'visibility' == by_state:
-            button = WebDriverWait(driver, max_wait).until(EC.visibility_of_element_located(locator)) 
+            element = WebDriverWait(driver, max_wait).until(EC.visibility_of_element_located(locator)) 
         elif 'clickable' == by_state:
-            button = WebDriverWait(driver, max_wait).until(EC.element_to_be_clickable(locator))
+            element = WebDriverWait(driver, max_wait).until(EC.element_to_be_clickable(locator))
+        elif 'invisibility' == by_state:
+            element = WebDriverWait(driver, max_wait).until(EC.invisibility_of_element_located(locator))
     except Exception as err:
         if args.debug:
             logging.exception(err)
         print('The element \'' + locator[1] + '\' is not found or it is in inaccessible state.\n' + \
               'Check log for more info.')
         exit(6)
-    return button
+    return element
 
 def get_elements(driver, locator, by_state, max_wait = 20):
-    elements = WebDriverWait(driver, max_wait).until(
-                             EC.presence_of_all_elements_located(locator))
+    try:
+        if 'presence' == by_state:
+            elements = WebDriverWait(driver, max_wait).until(
+                                     EC.presence_of_all_elements_located(locator))
+        elif 'visibility' == by_state:
+            elements = WebDriverWait(driver, max_wait).until(
+                                     EC.visibility_of_all_elements_located(locator))
+    except Exception as err:
+        if args.debug:
+            logging.exception(err)
+        print('The elements \'' + locator[1] + '\' are not found or they are in inaccessible state.\n' + \
+              'Check log for more info.')
+        exit(6)
     return elements
-    #visibility_of_all_elements_located
 
 def enter_string_with_delay(field, str_to_type):
     if args.debug:
@@ -382,12 +394,47 @@ def save_milestone_and_pdf(driver, configs):
     milestone_name = configs.get('WAR', 'milestone')
     save_milestone_button = get_element(driver, (By.ID, 'viewWorkload-recordMilestone'), 'clickable')
     save_milestone_button.click()
-    milestone_name_inputbox = get_element(driver, (By.NAME, 'milestoneName'), 'clickable')
-    milestone_name_inputbox.send_keys()
+    # Wait until 'Save milestone' modal dialog appears
+    get_element(driver, (By.CLASS_NAME, 'awsui-modal-container'), 'visibility')
+    milestone_name_inputbox = get_element(driver, (By.XPATH, '//input[@name="milestoneName"]'), 'clickable')
+    milestone_name_inputbox.send_keys(milestone_name)
     save_button = get_element(driver, (By.ID, 'viewWorkloadRecordMilestoneRecordButton'), 'clickable')
     save_button.click()
+    # Wait until 'Save milestone' modal dialog disappears
+    get_element(driver, (By.CLASS_NAME, 'awsui-modal-container'), 'invisibility')
     generate_pdf_button = get_element(driver, (By.ID, 'viewWorkload_generatePDFButton'), 'clickable')
     generate_pdf_button.click()
+    # Wait until PDF file download finishes
+    generate_pdf_button = get_element(driver, (By.XPATH, '//*[@id="viewWorkload_generatePDFButton"]//button[@type="submit"]'), 'presence')
+    while not generate_pdf_button.is_enabled():
+        time.sleep(1)
+
+def move_PDF_file(customer_name, configs):
+    import shutil
+    # TODO '-o' option value should override the ini value
+    output_dir = configs.get('GENERAL', 'outDir')
+    if '' == output_dir:
+        output_dir = args.output_dir
+    customer_dir = os.path.join(output_dir, customer_name)
+    make_directory(customer_dir)
+    if 'nt' == os.name:
+        downloads_dir = os.path.join(os.environ['USERPROFILE'], 'Downloads')
+    else:
+        downloads_dir = os.path.join(os.environ['HOME'], 'Downloads')
+    workload_name = configs.get('WAR', 'name')
+    pdf_file_path = os.path.join(downloads_dir, workload_name + '.pdf')
+    max_wait = 15
+    while not os.path.isfile(pdf_file_path):
+        time.sleep(1)
+        max_wait -= 1
+        if 0 >= max_wait:
+            print('File "' + pdf_file_path + '" is not found')
+            # TODO Logout
+            exit(6)
+    time.sleep(2)
+    # TODO add error handling
+    shutil.move(pdf_file_path, customer_dir)
+    print('File "' + pdf_file_path + '" is moved into "' + output_dir + '" directory')
 
 def review(driver, configs):
     ignore_answers_count_mismatch = False
@@ -435,8 +482,7 @@ def review(driver, configs):
             notes_textarea.send_keys(notes)
         if not does_not_apply:
             # Questions section automation
-            question_checkboxes = get_elements(driver, (By.CSS_SELECTOR, 
-                                                        'input[id^="awsui-checkbox"]'), 'clickable')
+            question_checkboxes = get_elements(driver, (By.CSS_SELECTOR, 'input[id^="awsui-checkbox"]'), 'presence')
             for key in keys:
                 if not key.isdigit():
                     if args.debug:
@@ -471,11 +517,9 @@ def review(driver, configs):
         time.sleep(random.random())
     save_and_exit_button = get_element(driver, (By.ID, 'questionWizard-saveAndExitButton-finalQuestion'), 'clickable')
     save_and_exit_button.click()
-    # TODO implemented partly
-    #save_milestone_and_pdf(driver, configs)
-    time.sleep(60)
+    save_milestone_and_pdf(driver, configs)
 
-def run(username, password, configs):
+def run(customer_name, username, password, configs):
     try:
         driver = open_browser()
         open_url(driver, configs)
@@ -484,6 +528,7 @@ def run(username, password, configs):
         open_war_service(driver)
         create_workload(driver, configs)
         review(driver, configs)
+        move_PDF_file(customer_name, configs)
         # TODO remove time.sleep call below
         time.sleep(60)
         driver.quit()
@@ -504,11 +549,12 @@ def main():
             logging_setup(log_file_path)
         check_chrome_driver_existence()
         configs = get_input_data(args.input_file_path)
+        customer_name = request_data('Custmer Name', input_mask = False)
         username = request_data('Username')
         password = request_data('Password')
         current_datetime = datetime.datetime.now()
         print("Started: " + current_datetime.strftime('%Y-%m-%d %H:%M:%S'))
-        run(username, password, configs)
+        run(customer_name, username, password, configs)
         current_datetime = datetime.datetime.now()
         print("Ended: " + current_datetime.strftime('%Y-%m-%d %H:%M:%S'))
     except KeyboardInterrupt as err:
