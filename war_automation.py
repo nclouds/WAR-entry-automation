@@ -1,8 +1,14 @@
 #!/usr/bin/env python
 
-""" Selenium Automation Script for entering information into AWS WAR (Well-Architected Review) Portal
+""" 
+    Selenium Automation Script for entering information into AWS WAR (Well-Architected Review) Portal
     
-    Exit Codes:
+    Defaults:
+        Input configuration file path: <script_dir>/war_input.ini
+        Output directory path: <script_dir>/<customer_name_dir>/
+
+    Exit codes and their descriptions:
+        0 - Normal termination
         1 - Selenium is not installed
         2 - Selenium driver for Chrome browser is not installed
         3 - Error occurred during the initial setup
@@ -10,7 +16,7 @@
         5 - Login failed
         6 - Error during automation
 
-    Script Version: N/A (Under development)
+    Script Version: 1.0.
 """
 
 import os, sys
@@ -26,7 +32,7 @@ try:
     from selenium.webdriver.support import expected_conditions as EC
     from selenium.webdriver.common.keys import Keys
     from selenium.webdriver import ActionChains
-    from selenium.common.exceptions import TimeoutException
+    from selenium.common.exceptions import TimeoutException, NoSuchElementException
 except ModuleNotFoundError:
     print('Selenium is not installed.\n\nFor installation run the following command: ' + \
           'pip install selenium\nFor more details visit: https://pypi.org/project/selenium/')
@@ -35,8 +41,7 @@ except Exception as err:
     print(str(err))
     exit(1)
 
-# TODO Add version number
-script_version = "N/A (Under development)" 
+script_version = "1.0" 
 args = None
 
 def get_python_version():
@@ -88,19 +93,20 @@ def check_chrome_driver_existence():
         exit(2)
 
 def setup_input_args(script_dir):
-    global args, parser
-    default_input_file_path = os.path.join(script_dir, 'war_input.ini')
+    global args
 
+    default_input_file_path = os.path.join(script_dir, 'war_input.ini')
     parser = argparse.ArgumentParser(description='AWS WAR (Well-Architected Review) Tool\n', 
                                      epilog='Script Version ' + script_version + '.', 
                                      formatter_class=argparse.RawTextHelpFormatter)
     parser.add_argument('-i', '--input', dest='input_file_path', default=default_input_file_path, 
                         help='input file path in \'ini\' format containing questionnaire key/value pairs')
-    parser.add_argument('-o', '--output', dest='output_dir', default=script_dir,
-                        help='directory path to move PDF files into')
+    parser.add_argument('-o', '--output', dest='output_dir', help='directory path to move PDF files into')
     parser.add_argument('-n', '--non-gui', dest='headless', default=False, action='store_true', 
                         help='run Chrome browser in headless (Non-GUI) mode')
-    parser.add_argument('-d', '--debug', action='store_true', help='print debug information and create log')
+    parser.add_argument('-d', '--debug', action='store_true', help='print debug information and create debug log')
+    parser.add_argument('-s', '--slow', dest='run_slowly', action='store_true', 
+                        help='run the script with up to 1 second random delays between some calls')
     parser.add_argument('-v', '--version', action='version', 
                         version='Script Version: ' + script_version + '.', 
                         help='print script version information and exit')
@@ -113,25 +119,21 @@ def make_directory(dir_path):
             print('Could not create log directory.')
             exit(3)
         try:
-            os.mkdir(dir_path)
+            os.makedirs(dir_path)
         except OSError as err:
             if args.debug:
                 logging.exception(err)
             print(str(err))
             exit(3)
 
-def get_input_data(input_file_path):
-    # Specify default values for some parameters for the case they are missing in the input file.
-    # Read, validate and return the input file (ini) content.
-    default_values = {'signin.url': 'https://console.aws.amazon.com'}
+def get_input_data(input_file_path, script_dir):
+    # Specify default value for outDir parameter for the case it is missing in the input file.
+    # Get configurations from the input file (ini).
     try:
-        if 3 <= get_python_version():
-            configs = configparser.ConfigParser()
-            configs.read(input_file_path)
-            configs['DEFAULT'] = default_values
-        else:
-            configs = configparser.ConfigParser(default_values)
-            configs.read(input_file_path)
+        configs = configparser.ConfigParser()
+        configs.add_section('DEFAULTS')
+        configs.set('DEFAULTS', 'outDir', script_dir)
+        configs.read(input_file_path)
         war_mandatory_keys = ['name', 'description', 'industryType', 'industry', 'environment', 
                               'regions', 'accountIDs']
         for key in war_mandatory_keys:
@@ -145,7 +147,7 @@ def get_input_data(input_file_path):
         print(str(err))
         exit(4)
 
-def request_data(prompt, input_mask = True):
+def request_data(prompt, input_mask = True, mandatory = True):
     prompt += ': '
     if input_mask:
         answer = getpass.getpass(prompt)
@@ -154,7 +156,7 @@ def request_data(prompt, input_mask = True):
             answer = input(prompt)
         else:
             answer = str(raw_input(prompt))
-    if 0 == len(answer.strip()):
+    if 0 == len(answer.strip()) and mandatory:
         print(prompt[:-2] + ' is not specified, exiting.')
         exit(0)
     return answer
@@ -163,8 +165,7 @@ def open_browser():
     chrome_options = webdriver.ChromeOptions()
     if args.headless:
         chrome_options.add_argument('headless')
-    else:
-        chrome_options.add_argument('start-maximized')
+    chrome_options.add_argument('start-maximized')
     try:
         driver = webdriver.Chrome(options = chrome_options)
     except Exception as err:
@@ -172,13 +173,13 @@ def open_browser():
         if args.debug:
             logging.exception(err)
         exit(3)
-    browser_version = driver.capabilities['version']
     if args.debug:
+        browser_version = driver.capabilities['version']
         info_str = 'Chrome Browser Version: ' + browser_version
         print(info_str)
         logging.info(info_str)
-    driver_version = driver.capabilities['chrome']['chromedriverVersion'].split()[0]
     if args.debug:
+        driver_version = driver.capabilities['chrome']['chromedriverVersion'].split()[0]
         info_str = 'Chrome Driver Version: ' + driver_version
         print(info_str)
         logging.info(info_str)
@@ -187,13 +188,12 @@ def open_browser():
 def open_url(driver, configs):
     try:
         signin_url = configs.get('GENERAL', 'signin.url')
-        # TODO implement signin from the default login page
-        if '' == signin_url:
-            signin_url = configs.get(configs.default_section, 'signin.url')
         if args.debug:
             print('Open URL: \'' + signin_url + '\'')
         driver.get(signin_url)
     except Exception as err:
+        if args.debug:
+            logging.exception(err)
         print(str(err))
         exit(6)
 
@@ -231,23 +231,29 @@ def get_elements(driver, locator, by_state, max_wait = 20):
         exit(6)
     return elements
 
-def enter_string_with_delay(field, str_to_type):
+def enter_string(field, str_to_type, delay = False):
     if args.debug:
         logging.disable(logging.DEBUG)
-    for char in str_to_type:
-        field.send_keys(char)
-        time.sleep(random.random())
+    if delay:
+        for char in str_to_type:
+            field.send_keys(char)
+            time.sleep(random.random())
+    else:
+        field.send_keys(str_to_type)
     if args.debug:
         logging.disable(logging.NOTSET)
 
 def login(driver, username, password):
     try:
+        delay = False
+        if args.run_slowly:
+            delay = True
         if args.debug:
             logging.disable(logging.DEBUG)
         username_field = driver.find_element_by_id('username')
-        enter_string_with_delay(username_field, username)
+        enter_string(username_field, username, delay)
         passwd_field = driver.find_element_by_id('password')
-        enter_string_with_delay(passwd_field, password)
+        enter_string(passwd_field, password, delay)
         signin_button = driver.find_element_by_id('signin_button')
         signin_button.click()
         while 'Amazon Web Services Sign-In' == driver.title:
@@ -265,12 +271,12 @@ def login(driver, username, password):
                         if args.debug:
                             logging.exception(err)
                         print(str(err))
-                        exit(5) 
+                        exit(5)
+        info_str = 'Logged in'
         if args.debug:
             logging.disable(logging.NOTSET)
-            info_str = 'Logged in'
             logging.info(info_str)
-            print(info_str)
+        print(info_str)
     except Exception as err:
         if args.debug:
             logging.exception(err)
@@ -378,7 +384,8 @@ def check_loading_state(driver, question_text):
     # Wait until the next question will be loaded
     try:
         max_wait = 60
-        while question_text == str(WebDriverWait(driver, 10).until(EC.visibility_of_element_located((By.CLASS_NAME, 'awsui-util-action-stripe-title'))).text):
+        while question_text == str(WebDriverWait(driver, 10).until(EC.visibility_of_element_located((By.CLASS_NAME, 
+                                                                   'awsui-util-action-stripe-title'))).text):
             time.sleep(1.5)
             max_wait -= 1.5
             if 0 >= max_wait:
@@ -405,18 +412,13 @@ def save_milestone_and_pdf(driver, configs):
     generate_pdf_button = get_element(driver, (By.ID, 'viewWorkload_generatePDFButton'), 'clickable')
     generate_pdf_button.click()
     # Wait until PDF file download finishes
-    generate_pdf_button = get_element(driver, (By.XPATH, '//*[@id="viewWorkload_generatePDFButton"]//button[@type="submit"]'), 'presence')
+    generate_pdf_button = get_element(driver, (By.XPATH, '//*[@id="viewWorkload_generatePDFButton"]//button[@type="submit"]'),
+                                     'presence')
     while not generate_pdf_button.is_enabled():
         time.sleep(1)
 
-def move_PDF_file(customer_name, configs):
+def move_PDF_file(driver, configs, output_dir):
     import shutil
-    # TODO '-o' option value should override the ini value
-    output_dir = configs.get('GENERAL', 'outDir')
-    if '' == output_dir:
-        output_dir = args.output_dir
-    customer_dir = os.path.join(output_dir, customer_name)
-    make_directory(customer_dir)
     if 'nt' == os.name:
         downloads_dir = os.path.join(os.environ['USERPROFILE'], 'Downloads')
     else:
@@ -429,34 +431,43 @@ def move_PDF_file(customer_name, configs):
         max_wait -= 1
         if 0 >= max_wait:
             print('File "' + pdf_file_path + '" is not found')
-            # TODO Logout
+            logout(driver)
             exit(6)
     time.sleep(2)
-    # TODO add error handling
-    shutil.move(pdf_file_path, customer_dir)
+    try:
+        shutil.move(pdf_file_path, output_dir)
+    except Exception as err:
+        if args.debug:
+            logging.exception(err)
+        print('Failed to move "' + pdf_file_path + '" file into "' + output_dir + '" directory')
+        return
     print('File "' + pdf_file_path + '" is moved into "' + output_dir + '" directory')
+
+def is_last_question(driver):
+    try:
+        driver.find_element_by_xpath('//*[@id="questionWizard-saveAndExitButton-finalQuestion" and @class=""]')
+        return True
+    except NoSuchElementException:
+        return False
 
 def review(driver, configs):
     ignore_answers_count_mismatch = False
     start_review_button = get_element(driver, (By.LINK_TEXT, 'Start review'), 'clickable')
     start_review_button.click()
-    sections = configs.sections()
+    sections = list(filter(None, configs.sections()))
     sections_count = len(sections)
-    
     for section in sections:
         if not section.startswith('QUESTION'):
             continue
         # Get the question text to compare later for loading state checking
-        question_text = str(WebDriverWait(driver, 20).until(EC.visibility_of_element_located((By.CLASS_NAME, 'awsui-util-action-stripe-title'))).text)
-        if args.debug:
+        question_text = str(WebDriverWait(driver, 20).until(EC.visibility_of_element_located((By.CLASS_NAME, 
+                                                            'awsui-util-action-stripe-title'))).text)
+        if args.debug or args.headless:
             logging.info(question_text)
+            logging.info('Section name: ' + section)
+            print('\tSection name: ' + section)
             print(question_text)
         keys = configs.options(section) 
-        # Removing default parameter 'signin.url'
-        try:
-            keys.remove('signin.url') 
-        except: 
-            pass
         does_not_apply = False
         notes = ''
         if configs.has_option(section, 'doNotApply'):
@@ -501,25 +512,73 @@ def review(driver, configs):
                             print('Answers count mismatch for question \'' + section + '\'')
                             print('Expected (in input file): ' + str(len(keys)))
                             print('Actual: ' + str(len(question_checkboxes)))
-                            answer = request_data('Do you want to continue and ignore all such mismatches? (y/n)', input_mask = False)
+                            answer = request_data('Do you want to continue and ignore all such mismatches? (y/n)', 
+                                                  input_mask = False)
                             if answer.lower().startswith('y'):
                                 ignore_answers_count_mismatch = True
                                 break
                             else:
                                 print('The script exited')
                                 exit(4)
-        # If not the last question
-        if sections.index(section) + 1 < sections_count:
-            next_button = get_element(driver, (By.ID, 'questionWizard-nextQuestionButton'), 'clickable')
-            next_button.click()
-            check_loading_state(driver, question_text)
-        # Add some randomness
-        time.sleep(random.random())
+        # Check if it is the last question and perform corresponding action
+        is_last = is_last_question(driver)
+        if is_last and (section != sections[-1]):
+            print('The specified questions count in the configuration file exceeds the actual one')
+            request_data('Press Enter key to exit', input_mask = False, mandatory = False)
+            logout(driver)
+            exit(6)
+        elif not is_last and (section == sections[-1]):
+            print('The specified questions count in the configuration file is less than the actual one')
+            request_data('Press Enter key to exit', input_mask = False, mandatory = False)
+            logout(driver)
+            exit(6)
+        else:
+            if not is_last:
+                next_button = get_element(driver, (By.ID, 'questionWizard-nextQuestionButton'), 'clickable')
+                next_button.click()
+                check_loading_state(driver, question_text)
+        if args.run_slowly:
+            # Add some randomness
+            time.sleep(random.random())
     save_and_exit_button = get_element(driver, (By.ID, 'questionWizard-saveAndExitButton-finalQuestion'), 'clickable')
     save_and_exit_button.click()
     save_milestone_and_pdf(driver, configs)
 
-def run(customer_name, username, password, configs):
+def create_file(file_path, data, mode = 'w'):
+    try:
+        with open(file_path, mode) as f:
+            f.write(data)
+    except Exception as err:
+        if args.debug:
+            logging.info(err)
+            print('Failed to create file:\n' + file_path)
+
+def save_ARN(driver, configs, output_dir):
+    milestones_link = get_element(driver, (By.LINK_TEXT, 'Milestones'), 'clickable')
+    milestones_link.click()
+    milestone_name = configs.get('WAR', 'milestone')
+    milestone_link = get_element(driver, (By.LINK_TEXT, milestone_name), 'clickable')
+    milestone_link.click()
+    properties_link = get_element(driver, (By.LINK_TEXT, 'Properties'), 'clickable')
+    properties_link.click()
+    ARN = str(get_element(driver, (By.ID, 'viewWorkload_workloadArn_milestone'), 'visibility').text)
+    workload_name = configs.get('WAR', 'name')
+    ARN_file_path = os.path.join(output_dir, 'ARN-' + workload_name + '.txt')
+    create_file(ARN_file_path, ARN)
+    print('ARN is saved: "' + ARN_file_path + '"')
+
+def logout(driver):
+    if args.debug or args.headless:
+        print('Logging out')
+    username_menu = get_element(driver, (By.ID, 'nav-usernameMenu'), 'clickable')
+    username_menu.click()
+    logout_button = get_element(driver, (By.ID, 'aws-console-logout'), 'clickable')
+    logout_button.click()
+    if args.debug or args.headless:
+        print('Closing the browser')
+    driver.quit()
+
+def run(username, password, configs, output_dir):
     try:
         driver = open_browser()
         open_url(driver, configs)
@@ -528,15 +587,43 @@ def run(customer_name, username, password, configs):
         open_war_service(driver)
         create_workload(driver, configs)
         review(driver, configs)
-        move_PDF_file(customer_name, configs)
-        # TODO remove time.sleep call below
-        time.sleep(60)
-        driver.quit()
+        move_PDF_file(driver, configs, output_dir)
+        save_ARN(driver, configs, output_dir)
+        logout(driver)
     except Exception as err:
         if args.debug:
             logging.exception(err)
         print(str(err))
         exit(6)
+
+def setup_output_destination(configs, customer_name):
+    output_dir = configs.get('GENERAL', 'outDir')
+    if '' == output_dir:
+        output_dir = configs.get('DEFAULTS', 'outDir')
+    if args.output_dir is not None:
+        output_dir = args.output_dir
+    if not os.path.isabs(output_dir):
+        output_dir = os.path.abspath(output_dir) 
+    workload_name = configs.get('WAR', 'name')
+    customer_dir = os.path.join(output_dir, customer_name) 
+    pdf_file_path = os.path.join(customer_dir, workload_name + '.pdf')
+    if os.path.isfile(pdf_file_path):
+        print('File "' + pdf_file_path + '" exists.')
+        answer = request_data('Do you want to overwrite? (y/n)', input_mask = False)
+        if answer.lower().startswith('y'):
+            try:
+                os.remove(pdf_file_path)
+            except OSError as err:
+                if args.debug:
+                    logging.exception(err)
+                print("Failed to remove the file:\n" + str(err))
+                print('The script exited')
+                exit(3)
+        else:
+            print('The script exited')
+            exit(0)
+    make_directory(customer_dir)
+    return customer_dir
 
 def main():
     try:
@@ -548,15 +635,20 @@ def main():
             log_file_path = os.path.join(log_dir, 'debug.log')
             logging_setup(log_file_path)
         check_chrome_driver_existence()
-        configs = get_input_data(args.input_file_path)
+        configs = get_input_data(args.input_file_path, script_dir)
+        if '' == configs.get('GENERAL', 'signin.url'):
+            print('Missing value for "signin.url" parameter in the configuration file')
+            exit(4)
         customer_name = request_data('Custmer Name', input_mask = False)
+        output_dir = setup_output_destination(configs, customer_name)
         username = request_data('Username')
         password = request_data('Password')
+        datetime_format = '%Y-%m-%d %H:%M:%S'
         current_datetime = datetime.datetime.now()
-        print("Started: " + current_datetime.strftime('%Y-%m-%d %H:%M:%S'))
-        run(customer_name, username, password, configs)
+        print("Started: " + current_datetime.strftime(datetime_format))
+        run(username, password, configs, output_dir)
         current_datetime = datetime.datetime.now()
-        print("Ended: " + current_datetime.strftime('%Y-%m-%d %H:%M:%S'))
+        print("Ended: " + current_datetime.strftime(datetime_format))
     except KeyboardInterrupt as err:
         print('\nScript execution canceled by the user')
         if args.debug:
