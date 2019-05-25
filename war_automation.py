@@ -668,7 +668,11 @@ def main():
             log_file_path = os.path.join(log_dir, 'debug.log')
             logging_setup(log_file_path)
         check_chrome_driver_existence()
-        configs = get_input_data(args.input_file_path, script_dir)
+        input_file_path = os.path.abspath(args.input_file_path)
+        if not os.path.isfile(input_file_path):
+            print('Input file is missing: ' + input_file_path)
+            exit(3)
+        configs = get_input_data(input_file_path, script_dir)
         customer_name = request_data('Custmer Name', input_mask = False)
         output_dir = setup_output_destination(configs, customer_name)
         username = request_data('Username')
@@ -680,7 +684,7 @@ def main():
         current_datetime = datetime.datetime.now()
         print("Ended: " + current_datetime.strftime(datetime_format))
     except KeyboardInterrupt as err:
-        print('\nScript execution canceled by the user')
+        print('\nScript execution interrupted by the user')
         if args.debug:
             logging.exception(err)
     except Exception as err:
