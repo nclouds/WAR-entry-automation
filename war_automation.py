@@ -99,7 +99,7 @@ def setup_input_args(script_dir):
     parser = argparse.ArgumentParser(description='AWS WAR (Well-Architected Review) Tool\n\n' + \
                                      'Script Version ' + script_version + '\n', 
                                      epilog='Default Input File: ' + default_input_file_path + '\n' + \
-                                            'Default Output Directory: ' + script_dir + '/<customer_name_dir>', 
+                                            'Default Output Directory: ' + script_dir + os.sep + '<customer_name_dir>', 
                                      formatter_class=argparse.RawTextHelpFormatter)
     parser.add_argument('-i', '--input', dest='input_file_path', default=default_input_file_path, 
                         help='input file (\'ini\' format) path containing parameters and the answers index/value pairs')
