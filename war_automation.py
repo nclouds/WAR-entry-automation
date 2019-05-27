@@ -158,8 +158,28 @@ def get_input_data(input_file_path, script_dir):
         for section in sections:
             if section.startswith('QUESTION'):
                 has_question_section = True
+                keys = configs.options(section)
+                for key in keys:
+                    if key not in ['donotapply', 'notes'] and not key.isdigit():
+                        if args.debug:
+                            logging.error('Expected: number (answer index), Got: ' + key)
+                        print('Invalid answer numbering in the input file \'' + section + '\' section')
+                        print('Expected: number\nGot: ' + key)
+                        exit(4)
+                    if 'notes' != key:
+                        try:
+                            configs.getboolean(section, key)
+                        except ValueError as err:
+                            if args.debug:
+                                logging.exception(err)
+                            print('Invalid value for checkbox state in the input file \'' + section + '\' section')
+                            print('Expected boolean value (e.g. yes/no): Checkbox #' + key)
+                            exit(4)
         if not has_question_section:
             print('No section with \'QUESTION\' prefix in the input file')
+            exit(4)
+        if not sections[-1].startswith('QUESTION'):
+            print('The input file last section should be \'QUESTION\' section')
             exit(4)
         return configs
     except configparser.Error as err:
@@ -264,20 +284,27 @@ def enter_string(field, str_to_type, delay = False):
     if args.debug:
         logging.disable(logging.NOTSET)
 
-def login(driver, username, password):
+def login(driver, configs, username, password):
     try:
         delay = False
         if args.run_slowly:
             delay = True
         if args.debug:
             logging.disable(logging.DEBUG)
-        username_field = driver.find_element_by_id('username')
+        signin_url = configs.get('GENERAL', 'signin.url')
+        ids_dict = {'AWS' : ['username', 'password', 'signin_button'],
+                    'nClouds' : ['wdc_username', 'wdc_password', 'wdc_login_button']}
+        if -1 != signin_url.find('nclouds'):
+            site_name = 'nClouds'
+        else:
+            site_name = 'AWS'
+        username_field = get_element(driver, (By.ID, ids_dict[site_name][0]), 'clickable')
         enter_string(username_field, username, delay)
-        passwd_field = driver.find_element_by_id('password')
+        passwd_field = get_element(driver, (By.ID, ids_dict[site_name][1]), 'clickable')
         enter_string(passwd_field, password, delay)
-        signin_button = driver.find_element_by_id('signin_button')
+        signin_button = get_element(driver, (By.ID, ids_dict[site_name][2]), 'clickable')
         signin_button.click()
-        while 'Amazon Web Services Sign-In' == driver.title:
+        while driver.title.endswith('Sign-In') or driver.title.endswith('Authentication'):
             time.sleep(2)
             if args.headless:
                 time.sleep(2)
@@ -528,13 +555,6 @@ def review(driver, configs):
             # Questions section automation
             question_checkboxes = get_elements(driver, (By.CSS_SELECTOR, 'input[id^="awsui-checkbox"]'), 'presence')
             for key in keys:
-                if not key.isdigit():
-                    if args.debug:
-                        logging.error('Expected: number (answer index), Got: ' + key)
-                    print('Invalid answer numbering in the input file \'' + section + '\' section')
-                    print('Expected: number\nGot: ' + key)
-                    logout(driver)
-                    exit(4)
                 if configs.getboolean(section, key):
                     try:
                         checkbox = question_checkboxes[int(key) - 1]
@@ -615,7 +635,7 @@ def run(username, password, configs, output_dir):
     try:
         driver = open_browser()
         open_url(driver, configs)
-        login(driver, username, password)
+        login(driver, configs, username, password)
         select_region(driver, 'N. Virginia')
         open_war_service(driver)
         create_workload(driver, configs)
