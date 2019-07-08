@@ -96,15 +96,17 @@ def setup_input_args(script_dir):
     global args
 
     default_input_file_path = os.path.join(script_dir, 'war_input.ini')
-    parser = argparse.ArgumentParser(description='AWS WAR (Well-Architected Review) Tool\n', 
-                                     epilog='Script Version ' + script_version + '.', 
+    parser = argparse.ArgumentParser(description='AWS WAR (Well-Architected Review) Tool\n\n' + \
+                                     'Script Version ' + script_version + '\n', 
+                                     epilog='Default Input File: ' + default_input_file_path + '\n' + \
+                                            'Default Output Directory: ' + script_dir + os.sep + '<customer_name_dir>', 
                                      formatter_class=argparse.RawTextHelpFormatter)
     parser.add_argument('-i', '--input', dest='input_file_path', default=default_input_file_path, 
-                        help='input file path in \'ini\' format containing questionnaire key/value pairs')
-    parser.add_argument('-o', '--output', dest='output_dir', help='directory path to move PDF files into')
+                        help='input file (\'ini\' format) path containing parameters and the answers index/value pairs')
+    parser.add_argument('-o', '--output', dest='output_dir', help='directory path to move PDF file into and save ARN file')
     parser.add_argument('-n', '--non-gui', dest='headless', default=False, action='store_true', 
                         help='run Chrome browser in headless (Non-GUI) mode')
-    parser.add_argument('-d', '--debug', action='store_true', help='print debug information and create debug log')
+    parser.add_argument('-d', '--debug', action='store_true', help='print debug/info messages and create debug log')
     parser.add_argument('-s', '--slow', dest='run_slowly', action='store_true', 
                         help='run the script with up to 1 second random delays between some calls')
     parser.add_argument('-v', '--version', action='version', 
@@ -134,12 +136,51 @@ def get_input_data(input_file_path, script_dir):
         configs.add_section('DEFAULTS')
         configs.set('DEFAULTS', 'outDir', script_dir)
         configs.read(input_file_path)
+        mandatory_sections = ['GENERAL', 'WAR']
+        for section in mandatory_sections:
+            if not configs.has_section(section):
+                print('Section \'' + section + '\' is missing in the input file')
+                exit(4)
+        if '' == configs.get('GENERAL', 'signin.url'):
+            print('Missing value for "signin.url" parameter in the configuration file')
+            exit(4)
         war_mandatory_keys = ['name', 'description', 'industryType', 'industry', 'environment', 
-                              'regions', 'accountIDs']
+                              'regions', 'accountIDs', 'milestone']
         for key in war_mandatory_keys:
             if not configs.has_option('WAR', key):
-                print('Key \'' + key + '\' is missing in the input file.')
+                print('Parameter \'' + key + '\' is missing in the input file')
                 exit(4)
+            elif '' == configs.get('WAR', key) and 'accountIDs' != key:
+                print('Missing value for "' + key +'" parameter in the configuration file')
+                exit(4)
+        has_question_section = False
+        sections = configs.sections()
+        for section in sections:
+            if section.startswith('QUESTION'):
+                has_question_section = True
+                keys = configs.options(section)
+                for key in keys:
+                    if key not in ['donotapply', 'notes'] and not key.isdigit():
+                        if args.debug:
+                            logging.error('Expected: number (answer index), Got: ' + key)
+                        print('Invalid answer numbering in the input file \'' + section + '\' section')
+                        print('Expected: number\nGot: ' + key)
+                        exit(4)
+                    if 'notes' != key:
+                        try:
+                            configs.getboolean(section, key)
+                        except ValueError as err:
+                            if args.debug:
+                                logging.exception(err)
+                            print('Invalid value for checkbox state in the input file \'' + section + '\' section')
+                            print('Expected boolean value (e.g. yes/no): Checkbox #' + key)
+                            exit(4)
+        if not has_question_section:
+            print('No section with \'QUESTION\' prefix in the input file')
+            exit(4)
+        if not sections[-1].startswith('QUESTION'):
+            print('The input file last section should be \'QUESTION\' section')
+            exit(4)
         return configs
     except configparser.Error as err:
         if args.debug:
@@ -169,9 +210,9 @@ def open_browser():
     try:
         driver = webdriver.Chrome(options = chrome_options)
     except Exception as err:
-        print(str(err))
         if args.debug:
             logging.exception(err)
+        print(str(err))
         exit(3)
     if args.debug:
         browser_version = driver.capabilities['version']
@@ -188,8 +229,8 @@ def open_browser():
 def open_url(driver, configs):
     try:
         signin_url = configs.get('GENERAL', 'signin.url')
-        if args.debug:
-            print('Open URL: \'' + signin_url + '\'')
+        if args.debug or args.headless:
+            print('Opening URL: \'' + signin_url + '\'')
         driver.get(signin_url)
     except Exception as err:
         if args.debug:
@@ -208,10 +249,10 @@ def get_element(driver, locator, by_state, max_wait = 20):
         elif 'invisibility' == by_state:
             element = WebDriverWait(driver, max_wait).until(EC.invisibility_of_element_located(locator))
     except Exception as err:
+        print('The element \'' + locator[1] + '\' is not found or it is in inaccessible state.\n')
         if args.debug:
             logging.exception(err)
-        print('The element \'' + locator[1] + '\' is not found or it is in inaccessible state.\n' + \
-              'Check log for more info.')
+            print('Check log for more info.')
         exit(6)
     return element
 
@@ -224,10 +265,10 @@ def get_elements(driver, locator, by_state, max_wait = 20):
             elements = WebDriverWait(driver, max_wait).until(
                                      EC.visibility_of_all_elements_located(locator))
     except Exception as err:
+        print('The elements \'' + locator[1] + '\' are not found or they are in inaccessible state.\n')
         if args.debug:
             logging.exception(err)
-        print('The elements \'' + locator[1] + '\' are not found or they are in inaccessible state.\n' + \
-              'Check log for more info.')
+            print('Check log for more info.')
         exit(6)
     return elements
 
@@ -243,24 +284,40 @@ def enter_string(field, str_to_type, delay = False):
     if args.debug:
         logging.disable(logging.NOTSET)
 
-def login(driver, username, password):
+def login(driver, configs, username, password):
     try:
         delay = False
         if args.run_slowly:
             delay = True
         if args.debug:
             logging.disable(logging.DEBUG)
-        username_field = driver.find_element_by_id('username')
+        signin_url = configs.get('GENERAL', 'signin.url')
+        ids_dict = {'AWS' : ['username', 'password', 'signin_button'],
+                    'nClouds' : ['wdc_username', 'wdc_password', 'wdc_login_button']}
+        if -1 != signin_url.find('nclouds'):
+            site_name = 'nClouds'
+        else:
+            site_name = 'AWS'
+        username_field = get_element(driver, (By.ID, ids_dict[site_name][0]), 'clickable')
         enter_string(username_field, username, delay)
-        passwd_field = driver.find_element_by_id('password')
+        passwd_field = get_element(driver, (By.ID, ids_dict[site_name][1]), 'clickable')
         enter_string(passwd_field, password, delay)
-        signin_button = driver.find_element_by_id('signin_button')
+        signin_button = get_element(driver, (By.ID, ids_dict[site_name][2]), 'clickable')
         signin_button.click()
-        while 'Amazon Web Services Sign-In' == driver.title:
+        while driver.title.endswith('Sign-In') or driver.title.endswith('Authentication'):
             time.sleep(2)
             if args.headless:
                 time.sleep(2)
                 if 'Amazon Web Services Sign-In' == driver.title:
+                    try:
+                        # Notify and exit when the entered username and/or password is not correct 
+                        element = driver.find_element_by_class_name('mainError')
+                        print(str(element.text))
+                        request_data('Press Enter key to exit', input_mask = False, mandatory = False)
+                        driver.quit()
+                        exit(6)
+                    except NoSuchElementException:
+                        pass
                     try:
                         mfacode_field = get_element(driver, (By.ID, 'mfacode'), 'visibility')
                         answer = request_data('MFA Code')
@@ -340,8 +397,8 @@ def create_workload(driver, configs):
             radio_button_value = 'preprod'
         else:
             print('Invalid input')
-            driver.quit()
-            exit(6)
+            logout(driver)
+            exit(4)
     environment_radio_button = get_element(driver, (By.XPATH, '//input[@type="radio" and @value="' + \
                                                     radio_button_value + '"]'), 'presence')
     actions = ActionChains(driver)
@@ -367,8 +424,9 @@ def create_workload(driver, configs):
                 print('Invalid Account ID in the input file: ' + account_id)
                 answer = request_data('Do you want to continue without entering Account IDs? (y/n)', input_mask = False)
                 if not answer.lower().startswith('y'):
+                    logout(driver)
                     print('The script exited')
-                    exit(6)
+                    exit(4)
                 else:
                     skip_ids = True
                     break
@@ -390,11 +448,13 @@ def check_loading_state(driver, question_text):
             max_wait -= 1.5
             if 0 >= max_wait:
                 print('The page loading did not finish in more than 1 minute.')
+                logout(driver)
                 exit(6)
     except TimeoutException as err:
         if args.debug:
             logging.exception(err)
         print('The question text at the top of the page was not found.')
+        logout(driver)
         exit(6)
 
 def save_milestone_and_pdf(driver, configs):
@@ -454,7 +514,7 @@ def review(driver, configs):
     ignore_answers_count_mismatch = False
     start_review_button = get_element(driver, (By.LINK_TEXT, 'Start review'), 'clickable')
     start_review_button.click()
-    sections = list(filter(None, configs.sections()))
+    sections = configs.sections()
     sections_count = len(sections)
     for section in sections:
         if not section.startswith('QUESTION'):
@@ -463,10 +523,10 @@ def review(driver, configs):
         question_text = str(WebDriverWait(driver, 20).until(EC.visibility_of_element_located((By.CLASS_NAME, 
                                                             'awsui-util-action-stripe-title'))).text)
         if args.debug or args.headless:
-            logging.info(question_text)
-            logging.info('Section name: ' + section)
-            print('\tSection name: ' + section)
-            print(question_text)
+            logging.info('Section Name: ' + section)
+            logging.info('Question: ' + question_text)
+            print('\tSection Name: ' + section)
+            print('Question: ' + question_text)
         keys = configs.options(section) 
         does_not_apply = False
         notes = ''
@@ -486,7 +546,7 @@ def review(driver, configs):
         if does_not_apply != is_checked:
             toggle_button.click()
 
-        # Notes
+        # Answer notes field
         if 0 < len(notes):
             notes_textarea = get_element(driver, (By.CSS_SELECTOR, 'textarea[id^="awsui-textarea"][name="answerNotes"]'), 
                                          'clickable')
@@ -495,12 +555,6 @@ def review(driver, configs):
             # Questions section automation
             question_checkboxes = get_elements(driver, (By.CSS_SELECTOR, 'input[id^="awsui-checkbox"]'), 'presence')
             for key in keys:
-                if not key.isdigit():
-                    if args.debug:
-                        logging.error('Expected: \'question.NUMBER.NUMBER\'\nGot: ' + key)
-                    print('Invalid answer numbering in the input file \'' + section + '\' section')
-                    print('Expected: number\nGot: ' + key)
-                    exit(4)
                 if configs.getboolean(section, key):
                     try:
                         checkbox = question_checkboxes[int(key) - 1]
@@ -518,6 +572,7 @@ def review(driver, configs):
                                 ignore_answers_count_mismatch = True
                                 break
                             else:
+                                logout(driver)
                                 print('The script exited')
                                 exit(4)
         # Check if it is the last question and perform corresponding action
@@ -550,8 +605,8 @@ def create_file(file_path, data, mode = 'w'):
             f.write(data)
     except Exception as err:
         if args.debug:
-            logging.info(err)
-            print('Failed to create file:\n' + file_path)
+            logging.exception(err)
+        print('Failed to create file:\n' + file_path)
 
 def save_ARN(driver, configs, output_dir):
     milestones_link = get_element(driver, (By.LINK_TEXT, 'Milestones'), 'clickable')
@@ -568,21 +623,19 @@ def save_ARN(driver, configs, output_dir):
     print('ARN is saved: "' + ARN_file_path + '"')
 
 def logout(driver):
-    if args.debug or args.headless:
-        print('Logging out')
+    print('Logging out')
     username_menu = get_element(driver, (By.ID, 'nav-usernameMenu'), 'clickable')
     username_menu.click()
     logout_button = get_element(driver, (By.ID, 'aws-console-logout'), 'clickable')
     logout_button.click()
-    if args.debug or args.headless:
-        print('Closing the browser')
+    print('Closing the browser')
     driver.quit()
 
 def run(username, password, configs, output_dir):
     try:
         driver = open_browser()
         open_url(driver, configs)
-        login(driver, username, password)
+        login(driver, configs, username, password)
         select_region(driver, 'N. Virginia')
         open_war_service(driver)
         create_workload(driver, configs)
@@ -635,10 +688,11 @@ def main():
             log_file_path = os.path.join(log_dir, 'debug.log')
             logging_setup(log_file_path)
         check_chrome_driver_existence()
-        configs = get_input_data(args.input_file_path, script_dir)
-        if '' == configs.get('GENERAL', 'signin.url'):
-            print('Missing value for "signin.url" parameter in the configuration file')
-            exit(4)
+        input_file_path = os.path.abspath(args.input_file_path)
+        if not os.path.isfile(input_file_path):
+            print('Input file is missing: ' + input_file_path)
+            exit(3)
+        configs = get_input_data(input_file_path, script_dir)
         customer_name = request_data('Custmer Name', input_mask = False)
         output_dir = setup_output_destination(configs, customer_name)
         username = request_data('Username')
@@ -650,7 +704,7 @@ def main():
         current_datetime = datetime.datetime.now()
         print("Ended: " + current_datetime.strftime(datetime_format))
     except KeyboardInterrupt as err:
-        print('\nScript execution canceled by the user')
+        print('\nScript execution interrupted by the user')
         if args.debug:
             logging.exception(err)
     except Exception as err:
