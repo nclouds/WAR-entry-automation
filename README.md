@@ -21,10 +21,12 @@ http://chromedriver.chromium.org/downloads
 
 Extract the archive and place ChromeDriver executable file in a directory included in 'PATH' environment variable
 
-#### Specify the input data in `war_input.ini` file
 
-#### Run the script
-`python war_automation.py`
+#### Run the script to see command line options
 
-#### Get help
 `python war_automation.py --help`
+
+### Usage of script
+
+`war_automation.py [-h] [-i INPUT_FILE_PATH] [-o OUTPUT_DIR] [-n] [-d]
+                         [-s] [-v]`
