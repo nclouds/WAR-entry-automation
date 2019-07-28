@@ -28,5 +28,5 @@ Extract the archive and place ChromeDriver executable file in a directory includ
 
 ### Usage of script
 
-`war_automation.py [-h] [-i INPUT_FILE_PATH] [-o OUTPUT_DIR] [-n] [-d]
+`python war_automation.py [-h] [-i INPUT_FILE_PATH] [-o OUTPUT_DIR] [-n] [-d]
                          [-s] [-v]`
