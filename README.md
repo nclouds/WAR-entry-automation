@@ -1,4 +1,4 @@
-Selenium Automation Scripts for entering information into AWS WAR Portal
+Selenium Automation Scripts for entering information into AWS Well-Architected Review (WAR) Portal
 ================
 
 Requirements
