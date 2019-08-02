@@ -103,7 +103,7 @@ def setup_input_args(script_dir):
                                      formatter_class=argparse.RawTextHelpFormatter)
     parser.add_argument('-i', '--input', dest='input_file_path', default=default_input_file_path, 
                         help='input file (\'ini\' format) path containing parameters and the answers index/value pairs')
-    parser.add_argument('-o', '--output', dest='output_dir', help='directory path to move PDF file into and save ARN file')
+    #parser.add_argument('-o', '--output', dest='output_dir', help='directory path to move PDF file into and save ARN file')
     parser.add_argument('-n', '--non-gui', dest='headless', default=False, action='store_true', 
                         help='run Chrome browser in headless (Non-GUI) mode')
     parser.add_argument('-d', '--debug', action='store_true', help='print debug/info messages and create debug log')
@@ -294,10 +294,11 @@ def login(driver, configs, username, password):
         signin_url = configs.get('GENERAL', 'signin.url')
         ids_dict = {'AWS' : ['username', 'password', 'signin_button'],
                     'nClouds' : ['wdc_username', 'wdc_password', 'wdc_login_button']}
-        if -1 != signin_url.find('nclouds'):
-            site_name = 'nClouds'
-        else:
-            site_name = 'AWS'
+        #if -1 != signin_url.find('nclouds'):
+        #    site_name = 'nClouds'
+        #else:
+            #site_name = 'AWS'
+        site_name = 'AWS'
         username_field = get_element(driver, (By.ID, ids_dict[site_name][0]), 'clickable')
         enter_string(username_field, username, delay)
         passwd_field = get_element(driver, (By.ID, ids_dict[site_name][1]), 'clickable')
@@ -653,8 +654,8 @@ def setup_output_destination(configs, customer_name):
     output_dir = configs.get('GENERAL', 'outDir')
     if '' == output_dir:
         output_dir = configs.get('DEFAULTS', 'outDir')
-    if args.output_dir is not None:
-        output_dir = args.output_dir
+    #if args.output_dir is not None:
+        #output_dir = args.output_dir
     if not os.path.isabs(output_dir):
         output_dir = os.path.abspath(output_dir) 
     workload_name = configs.get('WAR', 'name')
@@ -693,10 +694,10 @@ def main():
             print('Input file is missing: ' + input_file_path)
             exit(3)
         configs = get_input_data(input_file_path, script_dir)
-        customer_name = request_data('Custmer Name', input_mask = False)
+        customer_name = request_data('Customer Name', input_mask = False)
         output_dir = setup_output_destination(configs, customer_name)
-        username = request_data('Username')
-        password = request_data('Password')
+        username = request_data('AWS Console Username')
+        password = request_data('AWS Console Password')
         datetime_format = '%Y-%m-%d %H:%M:%S'
         current_datetime = datetime.datetime.now()
         print("Started: " + current_datetime.strftime(datetime_format))
