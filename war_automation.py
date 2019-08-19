@@ -369,18 +369,20 @@ def create_workload(driver, configs):
     industry_type_combobox.click()
     industry_type = configs.get('WAR', 'industryType')
     # Change the value to match item id naming convention
-    industry_type = industry_type.replace('& ', '')
-    industry_type = industry_type.replace(' ', '_')
-    industry_type_item = get_element(driver, (By.XPATH, '//li[contains(@id, "' + industry_type + '")]'), 'clickable')
+    #industry_type = industry_type.replace('& ', '')
+    #industry_type = industry_type.replace(' ', '_')
+    #industry_type_item = get_element(driver, (By.XPATH, '//li[contains(@id, "' + industry_type + '")]'), 'clickable')
+    industry_type_item = get_element(driver, (By.XPATH, '//div[contains(@title, "' + industry_type + '")]'), 'clickable')
     industry_type_item.click()
 
     industry_name_combobox = get_element(driver, (By.ID, 'subIndustrySelect'), 'clickable')
     industry_name_combobox.click()
     industry_name = configs.get('WAR', 'industry')
     # Change the value to match item id naming convention
-    industry_name = industry_type.replace('& ', '')
-    industry_name = industry_type.replace(' ', '_')
-    industry_name_item = get_element(driver, (By.XPATH, '//li[contains(@id, "' + industry_name + '")]'), 'clickable')
+    #industry_name = industry_name.replace('& ', '')
+    #industry_name = industry_name.replace(' ', '_')
+    #industry_name_item = get_element(driver, (By.XPATH, '//li[contains(@id, "' + industry_name + '")]'), 'clickable')
+    industry_name_item = get_element(driver, (By.XPATH, '//div[contains(@title, "' + industry_name + '")]'), 'clickable')
     industry_name_item.click()
 
     environment = configs.get('WAR', 'environment').lower()
@@ -412,10 +414,13 @@ def create_workload(driver, configs):
     aws_regions_checkbox.click()
     regions = configs.get('WAR', 'regions').lower().split(',')
     for region in regions:
-        aws_regions_combobox = get_element(driver, (By.ID, 'awsui-multiselect-0'), 'clickable')
+        aws_regions_combobox = get_element(driver, (By.XPATH, '//div[contains(@placeholder, "Choose regions")]'), 'clickable')
         aws_regions_combobox.click()
-        regions_item = get_element(driver, (By.XPATH, '//li[contains(@id, "' + region + '")]'), 'clickable')
+        #regions_item = get_element(driver, (By.XPATH, '//li[contains(@id, "' + region + '")]'), 'clickable')
+        regions_item = get_element(driver, (By.XPATH, '//div[contains(@data-value, "' + region + '")]'), 'clickable')
         regions_item.click()
+        time.sleep(2)
+        aws_regions_combobox.click()
     skip_ids = False
     account_ids = configs.get('WAR', 'accountIDs')
     if '' != account_ids:
